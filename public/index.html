@@ -539,7 +539,7 @@ function gatoChibi(x,y,escala,cor,detalhe,tempo,ator=null){
   ctx.roundRect(-22*escala,0,44*escala,7*escala,5*escala);
   ctx.fill();
 
-  if(actor===actors[myId]&&charging){
+  if(ator===actors[myId]&&charging){
     const r=39*escala+Math.sin(tempo*.02)*4*escala;
     ctx.strokeStyle="rgba(255,227,110,.85)";
     ctx.lineWidth=3*escala;
