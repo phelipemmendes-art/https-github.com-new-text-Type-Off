@@ -224,7 +224,7 @@ function shoot(room, playerId) {
     ownerId: playerId,
     x: p.x,
     y: p.y + (isP1 ? -0.065 : 0.065),
-    vy: isP1 ? -0.018 : 0.018,
+    vy: isP1 ? -0.070 : 0.070,
     kind: useMouse ? "mouse" : "cat",
     damage: useMouse ? 2 : 1,
     color: Math.floor(Math.random() * COLORS.length)
