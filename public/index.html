@@ -59,7 +59,8 @@ input:focus{border-color:#82d9ff}
       <h1>😺 1v1 Online</h1>
       <p>Crie uma sala e mande o código para seu amigo, ou entre em uma sala existente.</p>
       <div class="actions">
-        <button id="createBtn">Criar sala</button>
+        <button id="singleBtn" class="secondary">😺 Jogar sozinho contra a CPU</button>
+        <button id="createBtn">🌐 Criar sala online</button>
         <div id="joinRow">
           <input id="roomInput" maxlength="6" placeholder="CÓDIGO">
           <button id="joinBtn" class="secondary">Entrar</button>
@@ -198,6 +199,10 @@ ws.addEventListener("message",event=>{
     }
   }
 });
+
+document.getElementById("singleBtn").onclick=()=>{
+  window.location.href="/single.html";
+};
 
 document.getElementById("createBtn").onclick=()=>{
   if(!connected)return;

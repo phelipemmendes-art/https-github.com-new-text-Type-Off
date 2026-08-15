@@ -1,0 +1,1015 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cat Chibi Arena</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;overflow:hidden;font-family:Arial,sans-serif;background:#9bddff}
+canvas{display:block;width:100vw;height:100vh}
+#ui{position:fixed;inset:0;pointer-events:none;color:white;font-weight:900;text-shadow:0 3px 6px rgba(0,0,0,.25)}
+#vida1{position:absolute;left:20px;top:18px;font-size:26px}
+#vida2{position:absolute;right:20px;top:18px;font-size:26px}
+#titulo{position:absolute;top:17px;left:50%;transform:translateX(-50%);font-size:22px}
+#barraContainer{position:absolute;width:270px;height:18px;bottom:72px;left:50%;transform:translateX(-50%);padding:3px;background:rgba(255,255,255,.8);border-radius:30px}
+#barra{height:100%;width:0%;border-radius:30px;background:linear-gradient(90deg,#ffe36e,#ff91be,#80d9ff)}
+#controles{position:absolute;bottom:20px;left:50%;transform:translateX(-50%);color:#57434d;text-shadow:none;background:rgba(255,255,255,.88);padding:10px 18px;border-radius:30px}
+#fim{pointer-events:auto;display:none;position:absolute;inset:0;background:rgba(40,30,50,.5);align-items:center;justify-content:center}
+#painel{background:white;color:#58454e;text-shadow:none;padding:32px;border-radius:25px;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.25)}
+#painel h1{margin:0 0 20px}
+button{border:none;padding:12px 24px;border-radius:30px;background:linear-gradient(90deg,#ff8fbc,#ffda67);font-size:17px;font-weight:bold;cursor:pointer}
+
+#voltarOnline{position:fixed;right:18px;bottom:18px;z-index:20;pointer-events:auto;border:none;padding:10px 16px;border-radius:999px;background:#fff;color:#5a4650;font-weight:900;box-shadow:0 8px 25px rgba(0,0,0,.18);cursor:pointer}
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<button id="voltarOnline" onclick="location.href='/'">🌐 Voltar ao modo online</button>
+<div id="ui">
+  <div id="vida1"></div>
+  <div id="vida2"></div>
+  <div id="titulo">🐱 CAT CHIBI ARENA 🐱</div><div id="poderAtual" style="position:absolute;left:50%;top:48px;transform:translateX(-50%);font-size:14px;color:#5a4650;text-shadow:none;background:rgba(255,255,255,.82);padding:6px 12px;border-radius:999px">Poder: nenhum</div>
+  <div id="barraContainer"><div id="barra"></div></div>
+  <div id="controles">A / D para mover • Segure W • Solte W para lançar</div>
+  <div id="fim">
+    <div id="painel">
+      <h1 id="resultado"></h1>
+      <button onclick="reiniciar()">Jogar novamente</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const canvas=document.getElementById("game");
+const ctx=canvas.getContext("2d");
+let W,H;
+
+function resize(){
+  W=canvas.width=window.innerWidth*devicePixelRatio;
+  H=canvas.height=window.innerHeight*devicePixelRatio;
+  canvas.style.width=innerWidth+"px";
+  canvas.style.height=innerHeight+"px";
+  ctx.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0);
+}
+resize();
+window.addEventListener("resize",resize);
+
+const keys={};
+document.addEventListener("keydown",e=>{
+  keys[e.key.toLowerCase()]=true;
+  if(e.key.toLowerCase()==="w"&&!player.carregando&&player.cooldown<=0){
+    player.carregando=true;
+    player.forca=0;
+  }
+});
+document.addEventListener("keyup",e=>{
+  keys[e.key.toLowerCase()]=false;
+  if(e.key.toLowerCase()==="w"&&player.carregando){
+    lancarGato(player);
+    player.carregando=false;
+    player.cooldown=40;
+  }
+});
+
+const player={
+  x:0,y:0,vida:5,velocidade:6,forca:0,carregando:false,cooldown:0,
+  anim:Math.random()*20,cor:"#f0ad64",detalhe:"#ff789d",nome:"Você",
+  shootAnim:0,hitAnim:0,walkPhase:0,
+  escudoPelo:0,
+  catnipTimer:0,
+  superRato:false
+};
+
+const cpu={
+  x:0,y:0,vida:5,velocidade:0.75,cooldown:100,destinoX:0,vx:0,
+  anim:Math.random()*20,cor:"#78b8ec",detalhe:"#8871ff",nome:"CPU",
+  shootAnim:0,hitAnim:0,walkPhase:0
+};
+
+let gatos=[];
+let particulas=[];
+let miniGatosExplosao=[];
+let powerups=[];
+let powerSpawnTimer=360;
+let gameOver=false;
+
+const coresGato=[
+  ["#f0a75f","#ffe2ae"],
+  ["#999ca0","#e7e7e7"],
+  ["#f4f0ea","#ffffff"],
+  ["#bd8661","#efc29d"],
+  ["#705d89","#aa98c5"],
+  ["#d895ae","#ffd0dd"],
+  ["#69aaa3","#a9d8d3"]
+];
+
+function prepararPosicoes(){
+  const w=innerWidth,h=innerHeight;
+  player.x=w/2; player.y=h-115;
+  cpu.x=w/2; cpu.y=115;
+  cpu.destinoX=cpu.x;
+  cpu.vx=0;
+}
+prepararPosicoes();
+
+function roundRect(x,y,w,h,r){
+  ctx.beginPath();
+  ctx.roundRect(x,y,w,h,r);
+}
+
+function desenharNuvem(x,y,s){
+  ctx.save();
+  ctx.translate(x,y);
+  ctx.scale(s,s);
+  ctx.fillStyle="rgba(255,255,255,.9)";
+  ctx.beginPath();
+  ctx.arc(0,8,22,0,Math.PI*2);
+  ctx.arc(24,-3,27,0,Math.PI*2);
+  ctx.arc(52,9,21,0,Math.PI*2);
+  ctx.arc(27,15,30,0,Math.PI*2);
+  ctx.fill();
+  ctx.restore();
+}
+
+function arena(){
+  const w=innerWidth,h=innerHeight;
+  const largura=Math.min(620,w*.76);
+  const x=w/2-largura/2;
+  const y=70;
+  const altura=h-140;
+
+  const grad=ctx.createLinearGradient(0,0,0,h);
+  grad.addColorStop(0,"#91dafa");
+  grad.addColorStop(.55,"#c1efff");
+  grad.addColorStop(1,"#fff0b1");
+  ctx.fillStyle=grad;
+  ctx.fillRect(0,0,w,h);
+
+  desenharNuvem(75,100,1);
+  desenharNuvem(w-170,125,1.2);
+
+  ctx.fillStyle="#8dd77d";
+  ctx.fillRect(0,h-70,w,70);
+
+  ctx.fillStyle="rgba(70,50,70,.15)";
+  roundRect(x-16,y-10,largura+32,altura+28,30);
+  ctx.fill();
+
+  const borda=ctx.createLinearGradient(x,y,x+largura,y+altura);
+  borda.addColorStop(0,"#ff95c2");
+  borda.addColorStop(.5,"#ffe074");
+  borda.addColorStop(1,"#82d9ff");
+  ctx.fillStyle=borda;
+  roundRect(x-9,y-9,largura+18,altura+18,25);
+  ctx.fill();
+
+  ctx.save();
+  roundRect(x,y,largura,altura,20);
+  ctx.clip();
+
+  const colunas=6,linhas=10,cw=largura/colunas,ch=altura/linhas;
+  const cores=["#ffe6f1","#fff2c8","#e4f8ff","#eaffdf"];
+  for(let l=0;l<linhas;l++){
+    for(let c=0;c<colunas;c++){
+      ctx.fillStyle=cores[(l+c)%cores.length];
+      ctx.fillRect(x+c*cw,y+l*ch,cw,ch);
+    }
+  }
+
+  ctx.strokeStyle="rgba(110,90,110,.12)";
+  ctx.lineWidth=2;
+  for(let c=1;c<colunas;c++){
+    ctx.beginPath();ctx.moveTo(x+c*cw,y);ctx.lineTo(x+c*cw,y+altura);ctx.stroke();
+  }
+  for(let l=1;l<linhas;l++){
+    ctx.beginPath();ctx.moveTo(x,y+l*ch);ctx.lineTo(x+largura,y+l*ch);ctx.stroke();
+  }
+  ctx.restore();
+
+  ctx.setLineDash([14,14]);
+  ctx.strokeStyle="rgba(255,255,255,.8)";
+  ctx.lineWidth=3;
+  ctx.beginPath();
+  ctx.moveTo(x+10,h/2);
+  ctx.lineTo(x+largura-10,h/2);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  return{x,y,largura,altura};
+}
+
+function gatoChibi(x,y,escala,cor,detalhe,olhandoBaixo,tempo,ator=null){
+  ctx.save();
+  ctx.translate(x,y);
+
+  // Animações estáveis: sem deformar/rotacionar o personagem inteiro.
+  const idle=Math.sin(tempo*.0045)*0.8;
+  const andando=!!(ator&&ator.andando);
+  const passo=andando?Math.sin(ator.walkPhase):0;
+
+  let recoilY=0;
+  let hitShake=0;
+  let flash=false;
+
+  if(ator&&ator.shootAnim>0){
+    const progresso=1-(ator.shootAnim/16);
+    const impulso=Math.sin(progresso*Math.PI);
+    // Recuo na direção oposta ao lançamento.
+    recoilY=impulso*4.5*(olhandoBaixo?-1:1);
+  }
+
+  if(ator&&ator.hitAnim>0){
+    const intensidade=ator.hitAnim/22;
+    hitShake=Math.sin(ator.hitAnim*1.7)*3.5*intensidade;
+    flash=Math.floor(ator.hitAnim/4)%2===0;
+  }
+
+  const walkBob=andando?Math.abs(passo)*1.15:0;
+
+  ctx.translate(hitShake,idle+walkBob+recoilY);
+
+  // sombra fixa, para não "entortar" junto com o corpo
+  ctx.fillStyle="rgba(50,40,50,.15)";
+  ctx.beginPath();
+  ctx.ellipse(0,34*escala,34*escala,10*escala,0,0,Math.PI*2);
+  ctx.fill();
+
+  // cauda animada
+  const caudaBase=Math.sin(tempo*.006+(ator?ator.walkPhase*.35:0));
+  const cauda=caudaBase*(andando?4.2:2.4)*escala;
+  ctx.strokeStyle=flash?"#ffffff":cor;
+  ctx.lineWidth=11*escala;
+  ctx.lineCap="round";
+  ctx.beginPath();
+  ctx.moveTo(25*escala,10*escala);
+  ctx.bezierCurveTo(
+    49*escala,
+    (3*escala)+cauda*.25,
+    46*escala,
+    (-28*escala)+cauda,
+    28*escala,
+    (-24*escala)+cauda*.45
+  );
+  ctx.stroke();
+
+  // corpo
+  ctx.fillStyle=flash?"#ffffff":cor;
+  ctx.beginPath();
+  ctx.ellipse(0,7*escala,31*escala,34*escala,0,0,Math.PI*2);
+  ctx.fill();
+
+  // barriga
+  ctx.fillStyle="#fff0df";
+  ctx.beginPath();
+  ctx.ellipse(0,13*escala,18*escala,21*escala,0,0,Math.PI*2);
+  ctx.fill();
+
+  // cabeça felina
+  ctx.fillStyle=flash?"#ffffff":"#ffe9d6";
+  ctx.beginPath();
+  ctx.moveTo(-28*escala,-18*escala);
+  ctx.quadraticCurveTo(-32*escala,-43*escala,-16*escala,-51*escala);
+  ctx.quadraticCurveTo(0,-57*escala,16*escala,-51*escala);
+  ctx.quadraticCurveTo(32*escala,-43*escala,28*escala,-18*escala);
+  ctx.quadraticCurveTo(25*escala,0,14*escala,7*escala);
+  ctx.quadraticCurveTo(0,15*escala,-14*escala,7*escala);
+  ctx.quadraticCurveTo(-25*escala,0,-28*escala,-18*escala);
+  ctx.fill();
+
+  // orelhas com pequeno "wiggle"
+  const orelha=Math.sin(tempo*.007+(ator?ator.walkPhase*.25:0))*.8*escala;
+  ctx.fillStyle=flash?"#ffffff":cor;
+  ctx.beginPath();
+  ctx.moveTo(-24*escala,-38*escala);
+  ctx.lineTo((-19*escala)-orelha,-67*escala);
+  ctx.lineTo(-6*escala,-48*escala);
+  ctx.closePath();
+  ctx.moveTo(24*escala,-38*escala);
+  ctx.lineTo((19*escala)+orelha,-67*escala);
+  ctx.lineTo(6*escala,-48*escala);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.fillStyle="#f59ab0";
+  ctx.beginPath();
+  ctx.moveTo(-20*escala,-44*escala);ctx.lineTo((-18*escala)-orelha*.5,-60*escala);ctx.lineTo(-10*escala,-48*escala);ctx.closePath();
+  ctx.moveTo(20*escala,-44*escala);ctx.lineTo((18*escala)+orelha*.5,-60*escala);ctx.lineTo(10*escala,-48*escala);ctx.closePath();
+  ctx.fill();
+
+  // bochechas
+  ctx.fillStyle="#ffd7d4";
+  ctx.beginPath();
+  ctx.ellipse(-17*escala,-12*escala,9*escala,7*escala,0,0,Math.PI*2);
+  ctx.ellipse(17*escala,-12*escala,9*escala,7*escala,0,0,Math.PI*2);
+  ctx.fill();
+
+  // olhos
+  const piscando=Math.sin(tempo*.0015)>.985;
+  ctx.fillStyle="#352d32";
+  if(piscando){
+    ctx.strokeStyle="#352d32";
+    ctx.lineWidth=3*escala;
+    ctx.beginPath();
+    ctx.moveTo(-13*escala,-23*escala);ctx.quadraticCurveTo(-8*escala,-19*escala,-3*escala,-23*escala);
+    ctx.moveTo(3*escala,-23*escala);ctx.quadraticCurveTo(8*escala,-19*escala,13*escala,-23*escala);
+    ctx.stroke();
+  }else{
+    ctx.beginPath();
+    ctx.ellipse(-9*escala,-24*escala,4.7*escala,6.5*escala,0,0,Math.PI*2);
+    ctx.ellipse(9*escala,-24*escala,4.7*escala,6.5*escala,0,0,Math.PI*2);
+    ctx.fill();
+
+    ctx.fillStyle="white";
+    ctx.beginPath();
+    ctx.arc(-10.5*escala,-26*escala,1.5*escala,0,Math.PI*2);
+    ctx.arc(7.5*escala,-26*escala,1.5*escala,0,Math.PI*2);
+    ctx.fill();
+  }
+
+  // focinho
+  ctx.fillStyle="#fff7f2";
+  ctx.beginPath();
+  ctx.ellipse(-5*escala,-10*escala,8*escala,6.5*escala,0,0,Math.PI*2);
+  ctx.ellipse(5*escala,-10*escala,8*escala,6.5*escala,0,0,Math.PI*2);
+  ctx.fill();
+
+  ctx.fillStyle="#ef8da4";
+  ctx.beginPath();
+  ctx.moveTo(-3*escala,-13*escala);ctx.lineTo(3*escala,-13*escala);ctx.lineTo(0,-9*escala);ctx.closePath();
+  ctx.fill();
+
+  ctx.strokeStyle="#725158";
+  ctx.lineWidth=1.6*escala;
+  ctx.beginPath();
+  ctx.moveTo(0,-9*escala);ctx.quadraticCurveTo(-5*escala,-4*escala,-8*escala,-7*escala);
+  ctx.moveTo(0,-9*escala);ctx.quadraticCurveTo(5*escala,-4*escala,8*escala,-7*escala);
+  ctx.stroke();
+
+  // bigodes
+  ctx.globalAlpha=.6;
+  ctx.beginPath();
+  ctx.moveTo(-14*escala,-10*escala);ctx.lineTo(-32*escala,-14*escala);
+  ctx.moveTo(-14*escala,-5*escala);ctx.lineTo(-32*escala,-3*escala);
+  ctx.moveTo(14*escala,-10*escala);ctx.lineTo(32*escala,-14*escala);
+  ctx.moveTo(14*escala,-5*escala);ctx.lineTo(32*escala,-3*escala);
+  ctx.stroke();
+  ctx.globalAlpha=1;
+
+  // patas com passinhos alternados
+  ctx.fillStyle="#fff0df";
+  ctx.beginPath();
+  ctx.ellipse(-15*escala,27*escala + passo*.9*escala,11*escala,7*escala,-.1,0,Math.PI*2);
+  ctx.ellipse(15*escala,27*escala - passo*.9*escala,11*escala,7*escala,.1,0,Math.PI*2);
+  ctx.fill();
+
+  // acessório
+  ctx.fillStyle=detalhe;
+  ctx.beginPath();
+  ctx.roundRect(-22*escala,0,44*escala,7*escala,5*escala);
+  ctx.fill();
+
+  // aura de carregamento do jogador
+  if(ator===player && ator.carregando){
+    const r=39*escala + Math.sin(tempo*.02)*4*escala;
+    ctx.strokeStyle="rgba(255,227,110,.85)";
+    ctx.lineWidth=3*escala;
+    ctx.setLineDash([6*escala,5*escala]);
+    ctx.beginPath();
+    ctx.arc(0,-12*escala,r,0,Math.PI*2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  ctx.restore();
+}
+
+function lancarGato(dono){
+  // evita acúmulo exagerado de projéteis e mantém o jogo fluido
+  if(gatos.length>=18) return;
+
+  const escolhido=coresGato[Math.floor(Math.random()*coresGato.length)];
+  const dePlayer=dono===player;
+  const usarRato=dePlayer&&player.superRato;
+
+  gatos.push({
+    x:dono.x,
+    y:dono.y+(dePlayer?-55:55),
+    vy:dePlayer?-0.20:0.20,
+    dono,
+    cor:escolhido[0],
+    claro:escolhido[1],
+    anim:Math.random()*100,
+    rot:0,
+    tipo:usarRato?"rato":"gato",
+    dano:usarRato?2:1
+  });
+
+  if(usarRato){
+    player.superRato=false;
+  }
+
+  dono.shootAnim=16;
+  dono.forca=0;
+}
+
+
+const TIPOS_PODER=[
+  {tipo:"pelo",nome:"Bola de Pelo",emoji:"🧶",cor:"#d9b38c"},
+  {tipo:"catnip",nome:"Catnip",emoji:"🌿",cor:"#75c86f"},
+  {tipo:"rato",nome:"Super Rato Gigante",emoji:"🐭",cor:"#a9a3ad"}
+];
+
+function spawnPowerup(arena){
+  if(powerups.length>=2)return;
+
+  const p=TIPOS_PODER[Math.floor(Math.random()*TIPOS_PODER.length)];
+
+  powerups.push({
+    tipo:p.tipo,
+    nome:p.nome,
+    emoji:p.emoji,
+    cor:p.cor,
+    x:arena.x+70+Math.random()*(arena.largura-140),
+    y:player.y-5,
+    vida:720,
+    fase:Math.random()*Math.PI*2
+  });
+}
+
+function aplicarPowerup(p){
+  if(p.tipo==="pelo"){
+    player.escudoPelo=1;
+    explosao(player.x,player.y-25);
+  }
+
+  if(p.tipo==="catnip"){
+    player.catnipTimer=600;
+    explosao(player.x,player.y-25);
+  }
+
+  if(p.tipo==="rato"){
+    player.superRato=true;
+    explosao(player.x,player.y-25);
+  }
+
+  atualizarHUD();
+}
+
+function atualizarPowerups(arena){
+  powerSpawnTimer--;
+
+  if(powerSpawnTimer<=0){
+    spawnPowerup(arena);
+    powerSpawnTimer=420+Math.floor(Math.random()*300);
+  }
+
+  for(let i=powerups.length-1;i>=0;i--){
+    const p=powerups[i];
+    p.vida--;
+
+    if(
+      Math.abs(p.x-player.x)<42 &&
+      Math.abs(p.y-player.y)<46
+    ){
+      aplicarPowerup(p);
+      powerups.splice(i,1);
+      continue;
+    }
+
+    if(p.vida<=0){
+      powerups.splice(i,1);
+    }
+  }
+}
+
+function desenharPowerups(tempo){
+  for(const p of powerups){
+    const bob=Math.sin(tempo*.004+p.fase)*5;
+
+    ctx.save();
+    ctx.translate(p.x,p.y+bob);
+
+    ctx.fillStyle="rgba(60,45,60,.16)";
+    ctx.beginPath();
+    ctx.ellipse(0,25,28,8,0,0,Math.PI*2);
+    ctx.fill();
+
+    ctx.fillStyle="rgba(255,255,255,.94)";
+    ctx.beginPath();
+    ctx.arc(0,0,29,0,Math.PI*2);
+    ctx.fill();
+
+    ctx.strokeStyle=p.cor;
+    ctx.lineWidth=4;
+    ctx.stroke();
+
+    ctx.font="28px Arial";
+    ctx.textAlign="center";
+    ctx.textBaseline="middle";
+    ctx.fillText(p.emoji,0,1);
+
+    ctx.fillStyle="#5a4650";
+    ctx.font="700 11px Arial";
+    ctx.fillText(p.nome,0,42);
+
+    ctx.restore();
+  }
+}
+
+function desenharRatoGigante(g,tempo){
+  const bob=Math.sin(tempo*.006+g.anim)*3;
+
+  ctx.save();
+  ctx.translate(g.x,g.y+bob);
+
+  // sombra
+  ctx.fillStyle="rgba(40,30,45,.16)";
+  ctx.beginPath();
+  ctx.ellipse(0,28,36,10,0,0,Math.PI*2);
+  ctx.fill();
+
+  // cauda
+  ctx.strokeStyle="#d59aaa";
+  ctx.lineWidth=7;
+  ctx.lineCap="round";
+  ctx.beginPath();
+  ctx.moveTo(28,8);
+  ctx.bezierCurveTo(55,6,58,-20,40,-28);
+  ctx.stroke();
+
+  // corpo
+  ctx.fillStyle="#aaa5ad";
+  ctx.beginPath();
+  ctx.ellipse(0,5,34,29,0,0,Math.PI*2);
+  ctx.fill();
+
+  // cabeça/focinho
+  ctx.fillStyle="#c7c3ca";
+  ctx.beginPath();
+  ctx.ellipse(0,-17,28,23,0,0,Math.PI*2);
+  ctx.fill();
+
+  ctx.fillStyle="#dedbe0";
+  ctx.beginPath();
+  ctx.ellipse(0,-8,20,13,0,0,Math.PI*2);
+  ctx.fill();
+
+  // orelhas
+  ctx.fillStyle="#c7c3ca";
+  ctx.beginPath();
+  ctx.arc(-20,-31,11,0,Math.PI*2);
+  ctx.arc(20,-31,11,0,Math.PI*2);
+  ctx.fill();
+
+  ctx.fillStyle="#efa6b8";
+  ctx.beginPath();
+  ctx.arc(-20,-31,6,0,Math.PI*2);
+  ctx.arc(20,-31,6,0,Math.PI*2);
+  ctx.fill();
+
+  // olhos
+  ctx.fillStyle="#302b30";
+  ctx.beginPath();
+  ctx.arc(-9,-20,3.7,0,Math.PI*2);
+  ctx.arc(9,-20,3.7,0,Math.PI*2);
+  ctx.fill();
+
+  // nariz
+  ctx.fillStyle="#ef8da4";
+  ctx.beginPath();
+  ctx.arc(0,-7,4,0,Math.PI*2);
+  ctx.fill();
+
+  // aura
+  ctx.strokeStyle="rgba(255,220,90,.75)";
+  ctx.lineWidth=3;
+  ctx.setLineDash([8,7]);
+  ctx.beginPath();
+  ctx.arc(0,-3,45,0,Math.PI*2);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  ctx.restore();
+}
+
+function atualizarCPU(arena){
+  if(gameOver)return;
+
+  cpu.cooldown--;
+
+  let perigo=null;
+
+  for(const g of gatos){
+    if(
+      g.dono===player &&
+      g.y<innerHeight/2 &&
+      Math.abs(g.x-cpu.x)<75
+    ){
+      perigo=g;
+      break;
+    }
+  }
+
+  // Escolhe um destino, mas não teleporta nem muda de direção bruscamente.
+  if(perigo){
+    const distanciaEsquerd = cpu.x-(arena.x+45);
+    const distanciaDireita = (arena.x+arena.largura-45)-cpu.x;
+
+    cpu.destinoX =
+      distanciaDireita>distanciaEsquerd
+      ? cpu.x+105
+      : cpu.x-105;
+  }else if(Math.random()<.006){
+    cpu.destinoX =
+      arena.x+65+
+      Math.random()*(arena.largura-130);
+  }
+
+  cpu.destinoX=Math.max(
+    arena.x+45,
+    Math.min(arena.x+arena.largura-45,cpu.destinoX)
+  );
+
+  // Movimento com aceleração e desaceleração suaves.
+  const dx=cpu.destinoX-cpu.x;
+  const desejada=Math.max(-cpu.velocidade,Math.min(cpu.velocidade,dx*.025));
+
+  cpu.vx += (desejada-cpu.vx)*.08;
+  cpu.vx *= .97;
+
+  if(Math.abs(dx)<2){
+    cpu.vx*=.7;
+  }
+
+  cpu.x+=cpu.vx;
+
+  cpu.x=Math.max(
+    arena.x+45,
+    Math.min(arena.x+arena.largura-45,cpu.x)
+  );
+
+  // Atira sem alterar a posição da CPU.
+  if(cpu.cooldown<=0){
+    lancarGato(cpu);
+    cpu.cooldown=190+Math.random()*140;
+  }
+}
+
+function colisao(g,p){
+  return Math.abs(g.x-p.x)<36&&Math.abs(g.y-p.y)<43;
+}
+
+function explosao(x,y){
+  // efeito leve: poucas partículas geométricas em vez de emojis/texto
+  const limite=90;
+  if(particulas.length>limite) return;
+
+  for(let i=0;i<8;i++){
+    particulas.push({
+      x,y,
+      vx:(Math.random()-.5)*4,
+      vy:(Math.random()-.5)*4,
+      vida:18+Math.random()*12,
+      tamanho:2+Math.random()*4
+    });
+  }
+}
+
+function explosaoGatinhos(x,y){
+  // Limite para manter o jogo fluido mesmo com várias colisões seguidas.
+  if(miniGatosExplosao.length > 55) return;
+
+  const quantidade = 12;
+
+  for(let i=0;i<quantidade;i++){
+    const angulo = (Math.PI*2/quantidade)*i + Math.random()*.45;
+    const velocidade = 0.28 + Math.random()*0.42;
+    const cor = coresGato[Math.floor(Math.random()*coresGato.length)];
+
+    miniGatosExplosao.push({
+      x,
+      y,
+      vx: Math.cos(angulo)*velocidade,
+      vy: Math.sin(angulo)*velocidade - .8,
+      gravidade: .006 + Math.random()*.004,
+      rot: Math.random()*Math.PI*2,
+      vrot: (Math.random()-.5)*.025,
+      escala: .16 + Math.random()*.11,
+      vida: 180 + Math.random()*70,
+      vidaMax: 250,
+      cor: cor[0],
+      detalhe: "#ffe36e",
+      fase: Math.random()*1000
+    });
+  }
+
+  // Flash central bem curto.
+  for(let i=0;i<10;i++){
+    particulas.push({
+      x,y,
+      vx:(Math.random()-.5)*6,
+      vy:(Math.random()-.5)*6,
+      vida:12+Math.random()*10,
+      tamanho:2+Math.random()*4
+    });
+  }
+}
+
+function atualizarMiniGatosExplosao(){
+  for(let i=miniGatosExplosao.length-1;i>=0;i--){
+    const m=miniGatosExplosao[i];
+
+    m.x += m.vx;
+    m.y += m.vy;
+    m.vy += m.gravidade;
+
+    m.vx *= .997;
+    m.rot += m.vrot;
+    m.vida--;
+
+    if(m.vida<=0){
+      miniGatosExplosao.splice(i,1);
+    }
+  }
+}
+
+function desenharMiniGatosExplosao(tempo){
+  for(const m of miniGatosExplosao){
+    const alpha = Math.max(0, Math.min(1, m.vida / 55));
+
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.translate(m.x,m.y);
+    ctx.rotate(m.rot);
+    ctx.translate(-m.x,-m.y);
+
+    gatoChibi(
+      m.x,
+      m.y,
+      m.escala,
+      m.cor,
+      m.detalhe,
+      m.vy > 0,
+      tempo + m.fase
+    );
+
+    ctx.restore();
+  }
+
+  ctx.globalAlpha=1;
+}
+
+function atualizarGatos(){
+  // 1) Movimento
+  for(const g of gatos){
+    g.y += g.vy;
+    g.rot += .008;
+  }
+
+  // 2) Colisão projétil x projétil.
+  // Marca o que será removido em vez de usar splice durante o loop duplo.
+  const remover = new Set();
+
+  for(let i=0;i<gatos.length;i++){
+    if(remover.has(i)) continue;
+
+    const a=gatos[i];
+
+    for(let j=i+1;j<gatos.length;j++){
+      if(remover.has(j)) continue;
+
+      const b=gatos[j];
+
+      if(
+        a.dono!==b.dono &&
+        Math.abs(a.x-b.x)<42 &&
+        Math.abs(a.y-b.y)<44
+      ){
+        const impactoX=(a.x+b.x)/2;
+        const impactoY=(a.y+b.y)/2;
+
+        explosaoGatinhos(impactoX,impactoY);
+
+        const aRato=a.tipo==="rato";
+        const bRato=b.tipo==="rato";
+
+        if(aRato && !bRato){
+          remover.add(j);
+          continue;
+        }
+
+        if(bRato && !aRato){
+          remover.add(i);
+          break;
+        }
+
+        remover.add(i);
+        remover.add(j);
+        break;
+      }
+    }
+  }
+
+  if(remover.size){
+    gatos = gatos.filter((_,idx)=>!remover.has(idx));
+  }
+
+  // 3) Colisão projétil x jogador
+  for(let i=gatos.length-1;i>=0;i--){
+    const g=gatos[i];
+    const alvo=g.dono===player?cpu:player;
+
+    if(colisao(g,alvo)){
+      if(alvo===player && player.escudoPelo>0){
+        player.escudoPelo--;
+        explosao(g.x,g.y);
+        gatos.splice(i,1);
+        atualizarHUD();
+        continue;
+      }
+
+      alvo.vida -= g.dano || 1;
+      if(alvo.vida<0) alvo.vida=0;
+      alvo.hitAnim=22;
+
+      explosao(g.x,g.y);
+      gatos.splice(i,1);
+      atualizarHUD();
+
+      if(alvo.vida<=0){
+        encerrar(g.dono===player?"Você venceu! 😸":"A CPU venceu! 😼");
+      }
+      continue;
+    }
+
+    if(g.y<-80 || g.y>innerHeight+80){
+      gatos.splice(i,1);
+    }
+  }
+}
+
+function atualizarParticulas(){
+  for(let i=particulas.length-1;i>=0;i--){
+    const p=particulas[i];
+    p.x+=p.vx;
+    p.y+=p.vy;
+    p.vx*=.94;
+    p.vy*=.94;
+    p.vida--;
+
+    if(p.vida<=0){
+      particulas.splice(i,1);
+    }
+  }
+}
+
+function desenharParticulas(){
+  for(const p of particulas){
+    ctx.globalAlpha=Math.min(1,p.vida/18);
+
+    ctx.beginPath();
+    ctx.fillStyle = p.vx > 0 ? "#ffe36e" : "#ff8fbc";
+    ctx.arc(p.x,p.y,p.tamanho,0,Math.PI*2);
+    ctx.fill();
+  }
+  ctx.globalAlpha=1;
+}
+
+function desenharGatos(tempo){
+  for(const g of gatos){
+    ctx.save();
+    ctx.translate(g.x,g.y);
+    ctx.rotate(Math.sin(tempo*.003+g.anim)*.11);
+
+    ctx.globalAlpha=.12;
+    ctx.fillStyle=g.claro;
+    ctx.beginPath();
+    ctx.ellipse(0,-g.vy*35,24,31,0,0,Math.PI*2);
+    ctx.fill();
+    ctx.globalAlpha=1;
+    ctx.restore();
+
+    if(g.tipo==="rato"){
+      desenharRatoGigante(g,tempo);
+    }else{
+      gatoChibi(g.x,g.y,.55,g.cor,"#ffe36e",g.vy>0,tempo+g.anim);
+    }
+  }
+}
+
+function atualizarHUD(){
+  document.getElementById("vida1").textContent="❤️".repeat(Math.max(0,player.vida));
+  document.getElementById("vida2").textContent="❤️".repeat(Math.max(0,cpu.vida));
+  document.getElementById("barra").style.width=player.forca+"%";
+
+  let poderes=[];
+  if(player.escudoPelo>0)poderes.push("🧶 Escudo");
+  if(player.catnipTimer>0)poderes.push("🌿 Catnip "+Math.ceil(player.catnipTimer/60)+"s");
+  if(player.superRato)poderes.push("🐭 Próximo: Super Rato");
+
+  document.getElementById("poderAtual").textContent=
+    poderes.length?"Poder: "+poderes.join(" • "):"Poder: nenhum";
+}
+
+function encerrar(texto){
+  gameOver=true;
+  document.getElementById("resultado").textContent=texto;
+  document.getElementById("fim").style.display="flex";
+}
+
+function reiniciar(){
+  player.vida=5;cpu.vida=5;
+  player.forca=0;player.carregando=false;player.cooldown=0;
+  player.escudoPelo=0;player.catnipTimer=0;player.superRato=false;
+  player.shootAnim=0;player.hitAnim=0;player.walkPhase=0;player.andando=false;
+  cpu.shootAnim=0;cpu.hitAnim=0;cpu.walkPhase=0;cpu.andando=false;
+  cpu.cooldown=120;
+  cpu.vx=0;
+  cpu.destinoX=cpu.x;
+  gatos=[];particulas=[];miniGatosExplosao=[];powerups=[];powerSpawnTimer=240;
+  gameOver=false;
+  prepararPosicoes();
+  document.getElementById("fim").style.display="none";
+  atualizarHUD();
+}
+window.reiniciar=reiniciar;
+
+function loop(tempo){
+  requestAnimationFrame(loop);
+
+  const arenaInfo=arena();
+
+  if(!gameOver){
+    const velAtual=player.catnipTimer>0?9:player.velocidade;
+    const playerXAntes=player.x;
+
+    if(keys["a"])player.x-=velAtual;
+    if(keys["d"])player.x+=velAtual;
+
+    player.x=Math.max(arenaInfo.x+45,Math.min(arenaInfo.x+arenaInfo.largura-45,player.x));
+
+    player.andando=Math.abs(player.x-playerXAntes)>.01;
+    if(player.andando){
+      player.walkPhase+=0.10;
+    }
+
+    if(player.catnipTimer>0)player.catnipTimer--;
+
+    if(player.cooldown>0){
+      player.cooldown-=player.catnipTimer>0?3:1;
+      if(player.cooldown<0)player.cooldown=0;
+    }
+
+    if(player.carregando){
+      player.forca+=player.catnipTimer>0?1.45:.75;
+      if(player.forca>100)player.forca=100;
+    }
+
+    if(player.shootAnim>0)player.shootAnim--;
+    if(cpu.shootAnim>0)cpu.shootAnim--;
+    if(player.hitAnim>0)player.hitAnim--;
+    if(cpu.hitAnim>0)cpu.hitAnim--;
+
+    atualizarCPU(arenaInfo);
+
+    cpu.andando=Math.abs(cpu.vx||0)>.025;
+    if(cpu.andando){
+      cpu.walkPhase+=0.075;
+    }
+
+    atualizarPowerups(arenaInfo);
+    atualizarGatos();
+    atualizarParticulas();
+    atualizarMiniGatosExplosao();
+  }
+
+  desenharPowerups(tempo);
+
+  gatoChibi(cpu.x,cpu.y,1,cpu.cor,cpu.detalhe,true,tempo+cpu.anim,cpu);
+  gatoChibi(player.x,player.y,1,player.cor,player.detalhe,false,tempo+player.anim,player);
+
+  // indicador visual do escudo de bola de pelo
+  if(player.escudoPelo>0){
+    ctx.save();
+    ctx.strokeStyle="rgba(214,174,132,.78)";
+    ctx.lineWidth=5;
+    ctx.setLineDash([8,6]);
+    ctx.beginPath();
+    ctx.arc(player.x,player.y,54+Math.sin(tempo*.006)*3,0,Math.PI*2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.restore();
+  }
+
+  desenharGatos(tempo);
+  desenharMiniGatosExplosao(tempo);
+  desenharParticulas();
+  atualizarHUD();
+}
+
+atualizarHUD();
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
