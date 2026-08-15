@@ -102,6 +102,7 @@ const salaBadge=document.getElementById("salaBadge");
 let myId=null;
 let roomCode=null;
 let latestState=null;
+let stateReceivedAt=performance.now();
 let connected=false;
 let charging=false;
 let charge=0;
@@ -114,6 +115,7 @@ const actors={
 };
 let miniCats=[];
 let sparks=[];
+const renderProjectiles=new Map();
 
 const catColors=[
   ["#f0a75f","#ffe2ae"],
@@ -189,6 +191,7 @@ ws.addEventListener("message",event=>{
 
   if(msg.type==="state"){
     latestState=msg;
+    stateReceivedAt=performance.now();
     processEvents(msg.events||[]);
 
     if(msg.winnerId&&!gameOverShown){
@@ -731,25 +734,29 @@ function processEvents(events){
   }
 }
 
-function updateFx(){
+function updateFx(dt){
+  // Converte o delta real para "frames de 60 Hz".
+  // Assim as animações têm a mesma velocidade em 60, 120 ou 144 Hz.
+  const fs=Math.min(3,dt/(1000/60));
+
   for(let i=miniCats.length-1;i>=0;i--){
     const m=miniCats[i];
-    m.x+=m.vx;
-    m.y+=m.vy;
-    m.vy+=m.gravity;
-    m.vx*=.997;
-    m.rot+=m.vrot;
-    m.life--;
+    m.x+=m.vx*fs;
+    m.y+=m.vy*fs;
+    m.vy+=m.gravity*fs;
+    m.vx*=Math.pow(.997,fs);
+    m.rot+=m.vrot*fs;
+    m.life-=fs;
     if(m.life<=0)miniCats.splice(i,1);
   }
 
   for(let i=sparks.length-1;i>=0;i--){
     const p=sparks[i];
-    p.x+=p.vx;
-    p.y+=p.vy;
-    p.vx*=.94;
-    p.vy*=.94;
-    p.life--;
+    p.x+=p.vx*fs;
+    p.y+=p.vy*fs;
+    p.vx*=Math.pow(.94,fs);
+    p.vy*=Math.pow(.94,fs);
+    p.life-=fs;
     if(p.life<=0)sparks.splice(i,1);
   }
 }
@@ -778,24 +785,84 @@ function drawFx(tempo){
   ctx.globalAlpha=1;
 }
 
-function updateActors(){
+function updateActors(dt){
   if(!latestState)return;
 
+  const dtSec=Math.min(.05,dt/1000);
+  const packetAgeSec=Math.min(.05,(performance.now()-stateReceivedAt)/1000);
+  const fs=Math.min(3,dt/(1000/60));
+
   for(const id of ["p1","p2"]){
-    const target=latestState.players[id].x;
+    const state=latestState.players[id];
+    let target=state.x;
     const actor=actors[id];
 
-    actor.lastTargetX=target;
-    actor.renderX+=(target-actor.renderX)*.28;
-
-    actor.andando=Math.abs(target-actor.renderX)>.0012;
-
-    if(actor.andando){
-      actor.walkPhase+=id===myId?.10:.075;
+    // Predição local: seu próprio gato responde imediatamente às teclas,
+    // sem esperar o próximo pacote do servidor.
+    if(id===myId&&!latestState.winnerId){
+      const dir=(keys.right?1:0)-(keys.left?1:0);
+      const speed=state.catnipMs>0?.62:.42;
+      target+=dir*speed*packetAgeSec;
+      target=Math.max(.08,Math.min(.92,target));
     }
 
-    if(actor.shootAnim>0)actor.shootAnim--;
-    if(actor.hitAnim>0)actor.hitAnim--;
+    actor.lastTargetX=target;
+
+    // Interpolação independente da taxa de quadros.
+    // ~32 ms de constante de tempo: suave sem sensação de atraso pesado.
+    const alpha=1-Math.exp(-dt/32);
+    actor.renderX+=(target-actor.renderX)*alpha;
+
+    actor.andando=Math.abs(target-actor.renderX)>.0007;
+
+    if(actor.andando){
+      actor.walkPhase+=(id===myId?.10:.075)*fs;
+    }
+
+    if(actor.shootAnim>0)actor.shootAnim=Math.max(0,actor.shootAnim-fs);
+    if(actor.hitAnim>0)actor.hitAnim=Math.max(0,actor.hitAnim-fs);
+  }
+}
+
+function updateProjectileRender(dt){
+  if(!latestState){
+    renderProjectiles.clear();
+    return;
+  }
+
+  const ageSec=Math.min(.05,(performance.now()-stateReceivedAt)/1000);
+  const alpha=1-Math.exp(-dt/22);
+  const alive=new Set();
+
+  for(const p of latestState.projectiles){
+    alive.add(p.id);
+
+    // Extrapola alguns milissegundos usando a velocidade recebida.
+    // Isso remove o "anda / para / anda" entre snapshots da rede.
+    const targetX=p.x;
+    const targetY=p.y+p.vy*ageSec;
+
+    let r=renderProjectiles.get(p.id);
+    if(!r){
+      r={
+        x:targetX,
+        y:targetY,
+        kind:p.kind,
+        color:p.color,
+        ownerId:p.ownerId
+      };
+      renderProjectiles.set(p.id,r);
+    }else{
+      r.x+=(targetX-r.x)*alpha;
+      r.y+=(targetY-r.y)*alpha;
+      r.kind=p.kind;
+      r.color=p.color;
+      r.ownerId=p.ownerId;
+    }
+  }
+
+  for(const id of renderProjectiles.keys()){
+    if(!alive.has(id))renderProjectiles.delete(id);
   }
 }
 
@@ -826,9 +893,22 @@ function updateHud(){
 
 let lastArena=null;
 let lastTime=performance.now();
+let fpsFrames=0;
+let fpsLast=performance.now();
+let measuredFps=0;
 
 function render(tempo){
+  // requestAnimationFrame acompanha a taxa real do monitor:
+  // 120 Hz em tela 120 Hz, 144 Hz em tela 144 Hz, etc.
   requestAnimationFrame(render);
+
+  fpsFrames++;
+  if(tempo-fpsLast>=500){
+    measuredFps=Math.round(fpsFrames*1000/(tempo-fpsLast));
+    fpsFrames=0;
+    fpsLast=tempo;
+    document.title=`Cat Chibi Arena Online • ${measuredFps} FPS`;
+  }
 
   const dt=Math.min(50,tempo-lastTime);
   lastTime=tempo;
@@ -839,8 +919,9 @@ function render(tempo){
     charge=Math.min(100,charge+dt*.055);
   }
 
-  updateActors();
-  updateFx();
+  updateActors(dt);
+  updateProjectileRender(dt);
+  updateFx(dt);
 
   const a=lastArena;
 
@@ -885,15 +966,15 @@ function render(tempo){
       ctx.restore();
     }
 
-    // Projéteis
-    for(const p of latestState.projectiles){
+    // Projéteis suavizados entre os snapshots da rede.
+    for(const [id,p] of renderProjectiles){
       const s=worldToScreen(p.x,p.y,a);
 
       if(p.kind==="mouse"){
-        drawMouse(s.x,s.y,tempo+p.id);
+        drawMouse(s.x,s.y,tempo+id);
       }else{
         const c=catColors[p.color%catColors.length];
-        gatoChibi(s.x,s.y,.55,c[0],"#ffe36e",tempo+p.id*13,null);
+        gatoChibi(s.x,s.y,.55,c[0],"#ffe36e",tempo+id*13,null);
       }
     }
   }
@@ -903,7 +984,9 @@ function render(tempo){
 }
 
 function resize(){
-  const dpr=Math.min(2,window.devicePixelRatio||1);
+  // Cap em 1.5 reduz bastante o custo do Canvas em telas HiDPI,
+  // ajudando a alcançar 120 FPS sem deixar a arte borrada demais.
+  const dpr=Math.min(1.5,window.devicePixelRatio||1);
   canvas.width=Math.round(innerWidth*dpr);
   canvas.height=Math.round(innerHeight*dpr);
   canvas.style.width=innerWidth+"px";
