@@ -157,6 +157,7 @@ function publicState(room) {
 
   return {
     type: "state",
+    serverTime: now,
     code: room.code,
     ready: roomReady(room),
     winnerId: room.winnerId,
@@ -592,22 +593,27 @@ server.on("upgrade", (req, socket) => {
   socket.on("error", () => handleDisconnect(socket));
 });
 
+const SERVER_TICK_MS = 1000 / 120;
+const BROADCAST_MS = 1000 / 60;
+
 setInterval(() => {
   const now = Date.now();
 
   for (const room of rooms.values()) {
-    const dt = Math.min(0.05, Math.max(0.001, (now - room.lastTick) / 1000));
+    const dt = Math.min(0.025, Math.max(0.001, (now - room.lastTick) / 1000));
     room.lastTick = now;
 
+    // Física em aproximadamente 120 Hz.
     updateRoom(room, dt);
 
-    // 30 atualizações por segundo deixam o movimento suave sem exagerar no tráfego.
-    if (now - room.lastBroadcast >= 33) {
+    // Rede em aproximadamente 60 Hz.
+    // O cliente interpola/extrapola entre os pacotes para desenhar até 120 FPS.
+    if (now - room.lastBroadcast >= BROADCAST_MS) {
       room.lastBroadcast = now;
       broadcast(room, publicState(room));
     }
   }
-}, 16);
+}, SERVER_TICK_MS);
 
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`Cat Chibi Arena Online rodando na porta ${PORT}`);
