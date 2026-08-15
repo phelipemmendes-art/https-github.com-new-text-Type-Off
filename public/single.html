@@ -46,11 +46,17 @@ const ctx=canvas.getContext("2d");
 let W,H;
 
 function resize(){
-  W=canvas.width=window.innerWidth*devicePixelRatio;
-  H=canvas.height=window.innerHeight*devicePixelRatio;
+  // Limita o DPR para reduzir bastante o custo do Canvas em telas 2K/4K.
+  // Isso ajuda a manter 120 FPS sem perder muita nitidez.
+  const dpr=Math.min(1.5,window.devicePixelRatio||1);
+
+  W=canvas.width=Math.round(window.innerWidth*dpr);
+  H=canvas.height=Math.round(window.innerHeight*dpr);
+
   canvas.style.width=innerWidth+"px";
   canvas.style.height=innerHeight+"px";
-  ctx.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0);
+
+  ctx.setTransform(dpr,0,0,dpr,0,0);
 }
 resize();
 window.addEventListener("resize",resize);
@@ -456,8 +462,8 @@ function aplicarPowerup(p){
   atualizarHUD();
 }
 
-function atualizarPowerups(arena){
-  powerSpawnTimer--;
+function atualizarPowerups(arena,step){
+  powerSpawnTimer-=step;
 
   if(powerSpawnTimer<=0){
     spawnPowerup(arena);
@@ -466,7 +472,7 @@ function atualizarPowerups(arena){
 
   for(let i=powerups.length-1;i>=0;i--){
     const p=powerups[i];
-    p.vida--;
+    p.vida-=step;
 
     if(
       Math.abs(p.x-player.x)<42 &&
@@ -593,10 +599,10 @@ function desenharRatoGigante(g,tempo){
   ctx.restore();
 }
 
-function atualizarCPU(arena){
+function atualizarCPU(arena,step){
   if(gameOver)return;
 
-  cpu.cooldown--;
+  cpu.cooldown-=step;
 
   let perigo=null;
 
@@ -620,7 +626,7 @@ function atualizarCPU(arena){
       distanciaDireita>distanciaEsquerd
       ? cpu.x+105
       : cpu.x-105;
-  }else if(Math.random()<.006){
+  }else if(Math.random() < 1-Math.pow(1-.006,step)){
     cpu.destinoX =
       arena.x+65+
       Math.random()*(arena.largura-130);
@@ -635,14 +641,15 @@ function atualizarCPU(arena){
   const dx=cpu.destinoX-cpu.x;
   const desejada=Math.max(-cpu.velocidade,Math.min(cpu.velocidade,dx*.025));
 
-  cpu.vx += (desejada-cpu.vx)*.08;
-  cpu.vx *= .97;
+  const accel=1-Math.pow(1-.08,step);
+  cpu.vx += (desejada-cpu.vx)*accel;
+  cpu.vx *= Math.pow(.97,step);
 
   if(Math.abs(dx)<2){
-    cpu.vx*=.7;
+    cpu.vx*=Math.pow(.7,step);
   }
 
-  cpu.x+=cpu.vx;
+  cpu.x+=cpu.vx*step;
 
   cpu.x=Math.max(
     arena.x+45,
@@ -716,17 +723,17 @@ function explosaoGatinhos(x,y){
   }
 }
 
-function atualizarMiniGatosExplosao(){
+function atualizarMiniGatosExplosao(step){
   for(let i=miniGatosExplosao.length-1;i>=0;i--){
     const m=miniGatosExplosao[i];
 
-    m.x += m.vx;
-    m.y += m.vy;
-    m.vy += m.gravidade;
+    m.x += m.vx*step;
+    m.y += m.vy*step;
+    m.vy += m.gravidade*step;
 
-    m.vx *= .997;
-    m.rot += m.vrot;
-    m.vida--;
+    m.vx *= Math.pow(.997,step);
+    m.rot += m.vrot*step;
+    m.vida-=step;
 
     if(m.vida<=0){
       miniGatosExplosao.splice(i,1);
@@ -760,11 +767,11 @@ function desenharMiniGatosExplosao(tempo){
   ctx.globalAlpha=1;
 }
 
-function atualizarGatos(){
-  // 1) Movimento
+function atualizarGatos(step){
+  // 1) Movimento independente do FPS
   for(const g of gatos){
-    g.y += g.vy;
-    g.rot += .008;
+    g.y += g.vy*step;
+    g.rot += .008*step;
   }
 
   // 2) Colisão projétil x projétil.
@@ -849,14 +856,14 @@ function atualizarGatos(){
   }
 }
 
-function atualizarParticulas(){
+function atualizarParticulas(step){
   for(let i=particulas.length-1;i>=0;i--){
     const p=particulas[i];
-    p.x+=p.vx;
-    p.y+=p.vy;
-    p.vx*=.94;
-    p.vy*=.94;
-    p.vida--;
+    p.x+=p.vx*step;
+    p.y+=p.vy*step;
+    p.vx*=Math.pow(.94,step);
+    p.vy*=Math.pow(.94,step);
+    p.vida-=step;
 
     if(p.vida<=0){
       particulas.splice(i,1);
@@ -935,8 +942,33 @@ function reiniciar(){
 }
 window.reiniciar=reiniciar;
 
+let ultimoFrame=performance.now();
+let fpsFrames=0;
+let fpsUltimaLeitura=performance.now();
+let fpsMedido=0;
+
 function loop(tempo){
+  // requestAnimationFrame segue a taxa real do monitor:
+  // 120 Hz em tela de 120 Hz, 144 Hz em tela de 144 Hz etc.
   requestAnimationFrame(loop);
+
+  let dt=tempo-ultimoFrame;
+  ultimoFrame=tempo;
+
+  // Evita saltos gigantes se a aba ficar em segundo plano.
+  dt=Math.min(50,Math.max(1,dt));
+
+  // step=1 equivale ao comportamento original em 60 FPS.
+  // Em 120 FPS fica perto de 0.5, mantendo a MESMA velocidade por segundo.
+  const step=dt/(1000/60);
+
+  fpsFrames++;
+  if(tempo-fpsUltimaLeitura>=500){
+    fpsMedido=Math.round(fpsFrames*1000/(tempo-fpsUltimaLeitura));
+    fpsFrames=0;
+    fpsUltimaLeitura=tempo;
+    document.title=`Cat Chibi Arena • ${fpsMedido} FPS`;
+  }
 
   const arenaInfo=arena();
 
@@ -944,44 +976,46 @@ function loop(tempo){
     const velAtual=player.catnipTimer>0?9:player.velocidade;
     const playerXAntes=player.x;
 
-    if(keys["a"])player.x-=velAtual;
-    if(keys["d"])player.x+=velAtual;
+    if(keys["a"])player.x-=velAtual*step;
+    if(keys["d"])player.x+=velAtual*step;
 
     player.x=Math.max(arenaInfo.x+45,Math.min(arenaInfo.x+arenaInfo.largura-45,player.x));
 
-    player.andando=Math.abs(player.x-playerXAntes)>.01;
+    player.andando=Math.abs(player.x-playerXAntes)>.001;
     if(player.andando){
-      player.walkPhase+=0.10;
+      player.walkPhase+=0.10*step;
     }
 
-    if(player.catnipTimer>0)player.catnipTimer--;
+    if(player.catnipTimer>0){
+      player.catnipTimer=Math.max(0,player.catnipTimer-step);
+    }
 
     if(player.cooldown>0){
-      player.cooldown-=player.catnipTimer>0?3:1;
+      player.cooldown-=(player.catnipTimer>0?3:1)*step;
       if(player.cooldown<0)player.cooldown=0;
     }
 
     if(player.carregando){
-      player.forca+=player.catnipTimer>0?1.45:.75;
+      player.forca+=(player.catnipTimer>0?1.45:.75)*step;
       if(player.forca>100)player.forca=100;
     }
 
-    if(player.shootAnim>0)player.shootAnim--;
-    if(cpu.shootAnim>0)cpu.shootAnim--;
-    if(player.hitAnim>0)player.hitAnim--;
-    if(cpu.hitAnim>0)cpu.hitAnim--;
+    if(player.shootAnim>0)player.shootAnim=Math.max(0,player.shootAnim-step);
+    if(cpu.shootAnim>0)cpu.shootAnim=Math.max(0,cpu.shootAnim-step);
+    if(player.hitAnim>0)player.hitAnim=Math.max(0,player.hitAnim-step);
+    if(cpu.hitAnim>0)cpu.hitAnim=Math.max(0,cpu.hitAnim-step);
 
-    atualizarCPU(arenaInfo);
+    atualizarCPU(arenaInfo,step);
 
     cpu.andando=Math.abs(cpu.vx||0)>.025;
     if(cpu.andando){
-      cpu.walkPhase+=0.075;
+      cpu.walkPhase+=0.075*step;
     }
 
-    atualizarPowerups(arenaInfo);
-    atualizarGatos();
-    atualizarParticulas();
-    atualizarMiniGatosExplosao();
+    atualizarPowerups(arenaInfo,step);
+    atualizarGatos(step);
+    atualizarParticulas(step);
+    atualizarMiniGatosExplosao(step);
   }
 
   desenharPowerups(tempo);
